@@ -1,0 +1,142 @@
+#libraries
+library('data.table')
+library('ggplot2')
+library('dplyr')
+library('tidyr')
+library('stats')
+
+
+#Dataset
+dataset <- read.csv("/home/dennis/Desktop/Data-Science-analytics-R/david/dataset/full_trains.csv", header = TRUE)
+
+#theme for plots
+theme_set(theme_classic())
+theme_update(plot.title = element_text((hjust = 0.5)))
+
+#EDA
+summary(dataset)
+str(dataset)
+numeric_cols <- sapply(dataset,is.numeric)
+numeric_dataset <- dataset[,numeric_cols]
+
+#futher EDA
+numeric_dataset <- numeric_dataset[, !colnames(numeric_dataset) %in% 'year']
+numeric_dataset <- numeric_dataset[, !colnames(numeric_dataset) %in% 'month']
+boxplot(numeric_dataset)
+
+#preprocessing
+#removing NA
+#which(is.na(dataset))
+
+dataset <- subset.data.frame(dataset,select = -c(comment_cancellations,comment_delays_on_arrival,comment_delays_at_departure))
+dataset[dataset < 0] <- NA
+dataset <- drop_na(dataset)
+
+#investigating factors causing variance in trip time
+cancellations <- dataset %>% group_by(departure_station) %>% summarise(cancelled_trips= sum(num_of_canceled_trains))
+
+# Calculate total number of delays caused by external factors for each train station
+delays_external<- dataset %>% group_by(departure_station ) %>% summarise(external_f = sum(delay_cause_external_cause))
+cancellations <- merge(cancellations, delays_external, by = "departure_station")
+# Sort train stations by external delays in descending order
+stations_sorted <- cancellations[order(cancellations$external_f, decreasing = TRUE), ]
+# Explore train stations with higher cancellation rates and their external factors
+head(stations_sorted)
+
+
+# Calculate total number of delays caused by management for each train station
+delay_management<- dataset %>% group_by(departure_station) %>% summarise(delays_management = sum(delay_cause_station_management))
+# Merge with cancellations dataset
+cancellations <- merge(cancellations, delay_management, by = "departure_station")
+# Sort train stations by external delays in descending order
+stations_sorted <- cancellations[order(cancellations$delays_management, decreasing = TRUE), ]
+# Explore train stations with higher cancellation rates and their external factors
+head(stations_sorted)
+
+
+# Calculate total number of delays caused by rail infrastructure for each train station
+rail_infra_delays <- dataset %>% group_by(departure_station) %>% summarise(rail_infra_delays = sum(delay_cause_rail_infrastructure))
+cancellations <- merge(cancellations, rail_infra_delays, by = "departure_station")
+# Sort train stations by total rail infrastructure delays in descending order
+stations_sorted <- cancellations[order(cancellations$rail_infra_delays, decreasing = TRUE), ]
+# Explore train stations with higher cancellation rates and their rail infrastructure delays
+head(stations_sorted)
+
+
+# Calculate total number of delays caused by rail infrastructure for each train station
+rail_infra_delays <- dataset %>% group_by(departure_station) %>% summarise(travelers_delays = sum(delay_cause_travelers))
+cancellations <- merge(cancellations, rail_infra_delays, by = "departure_station")
+# Sort train stations by total rail infrastructure delays in descending order
+stations_sorted <- cancellations[order(cancellations$travelers_delays, decreasing = TRUE), ]
+# Explore train stations with higher cancellation rates and their rail infrastructure delays
+head(stations_sorted)
+
+#Calculate total number of delays caused by rail rolling stock for each train station
+rolling_stock_delays <- dataset %>% group_by(departure_station) %>% summarise(rolling_stock_delay = sum(delay_cause_rolling_stock))
+cancellations <- merge(cancellations, rolling_stock_delays, by = "departure_station")
+# Sort train stations by total rail infrastructure delays in descending order
+stations_sorted <- cancellations[order(cancellations$rolling_stock_delay, decreasing = TRUE), ]
+# Explore train stations with higher cancellation rates and their rail infrastructure delays
+head(stations_sorted)
+
+
+#question 1
+#Distribution of cancelled trains
+distribution <- dataset %>% group_by(departure_station) %>% summarise(Total_cancelled = sum(num_of_canceled_trains))
+head(distribution)
+ggplot(data = distribution, aes(x= departure_station,y=Total_cancelled))+ geom_bar(stat = 'identity')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+#comparing cancellations with the various factors
+anova_test <- aov(cancelled_trips ~ rail_infra_delays + external_f + delays_management + travelers_delays + rolling_stock_delay, data = stations_sorted) 
+summary(anova_test)
+
+#conclusion
+#external factors and rail infrastructure delays are the most significant factors affecting cancellation of trains
+
+
+#quetion 2
+#Average trip times
+average_trip_time <- dataset %>% group_by(departure_station) %>% summarise(Mean_trip_time = mean(journey_time_avg))
+head(average_trip_time)
+ggplot(data = average_trip_time, aes(x= departure_station,y=Mean_trip_time))+ geom_bar(stat = 'identity')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+#comparing trip time with various factors causing delays
+cancellations<-merge(cancellations,average_trip_time,by = 'departure_station')
+stations_sorted <- cancellations[order(cancellations$Mean_trip_time, decreasing = TRUE), ]
+
+anova_test <- aov(Mean_trip_time ~ rail_infra_delays + external_f + delays_management + travelers_delays+ rolling_stock_delay, data = stations_sorted) 
+summary(anova_test)
+
+
+#conclusions
+#delays caused by rolling stock and management have the greatest impact on average_trip_time in the sattions
+
+
+# variance in trips by month 
+varying_trips <- dataset %>% group_by(year,month,departure_station) %>% summarise(trips_by_station = sum(total_num_trips))
+varying_trips$Date <- as.Date(paste0(varying_trips$year, "-", varying_trips$month, "-01"))
+varying_trips <- subset.data.frame(varying_trips,select = -c(year,month))
+
+which.max(varying_trips$trips_by_station)
+which.min(varying_trips$trips_by_station)
+mean(varying_trips$trips_by_station)
+#summary by date
+varying_trips <- varying_trips %>%group_by(departure_station,Date) %>% summarise(mean_trips = mean(trips_by_station))
+#summary by mean for the whole period
+varying_trips2 <- varying_trips %>%group_by(departure_station) %>% summarise(station = unique(departure_station),
+                                                                             mean = mean(mean_trips))
+#summary by max number of trips for the whole period
+max_trips <- varying_trips %>%group_by(departure_station) %>% summarise(max_trips = max(mean_trips))
+varying_trips2 <-merge(varying_trips2, max_trips, by = "departure_station")
+varying_trips2 <- subset.data.frame(varying_trips2,select = -c(station))
+varying_trips2 <- varying_trips2[order(varying_trips2$max_trips, decreasing = TRUE), ]
+
+# Reshape the data frame into long format
+df_long <- gather(varying_trips2, key = "Variable", value = "Value", mean, max_trips)
+
+# Create the bar plot
+ggplot(df_long, aes(x = departure_station, y = Value, fill = Variable)) +
+  geom_bar(stat = 'identity', position = "dodge") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
