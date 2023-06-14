@@ -1,0 +1,342 @@
+---
+title: "Assignment 1:\"."
+author: "David"
+date: "2023-05-17"
+pdf_document: default
+html_document: default
+mainfont: Roboto
+monofont: Consolas
+output:
+  pdf_document:
+  df_print: default
+highlight: tango
+keep_tex: yes
+latex_engine: xelatex
+header-includes:
+  \usepackage{fvextra}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(linewidth=80)
+```{r knitr line wrap setup, include=FALSE}
+# set up line wrapping in MD knit output
+library(knitr)
+hook_output = knit_hooks$get("output")
+knit_hooks$set(output = function(x, options)
+{
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth))
+  {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n))
+      x = strwrap(x, width = n)
+    x = paste(x, collapse = "\n")
+  }
+  hook_output(x, options)
+})
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+#libraries
+library('dplyr')
+library('tidyr')
+library('tidymodels')
+library("cowplot")
+library('plotly')
+library('ggplot2')
+library('data.table')
+library('ggmap')
+library('sf')
+library('reshape2')
+library('caret')
+library('yardstick')
+
+
+#dataset
+train <- read.csv("/home/dennis/Desktop/Data-Science-analytics-R/david/Assignment2/dataset/train.csv", header = TRUE)
+
+
+#DATA WRANGLING TECHNIQUES
+#1 DESCRIPTIVE ANALYTICS
+numeric_cols <- sapply(train,is.numeric)
+numeric_dataset <- train[,numeric_cols]
+char_cols <- sapply(train,is.character)
+char_dataset <- train[,char_cols]
+
+#summary
+summary(train)
+#data Structure
+str(train)
+#finding null data
+sum(is.na(train))
+#duplicated data
+which(duplicated.data.frame(train))
+
+#histograms
+#1 histograms of numerical data
+hist_plots <- list()
+
+for (col in colnames(numeric_dataset)) {
+  # Create a histogram plot for the current column
+  p <- ggplot(numeric_dataset, aes(x = .data[[col]])) +
+    geom_histogram() +
+    labs(title = paste("Histogram of", col),
+         x = col,
+         y = "Count") +
+    theme_minimal()
+  
+  # Append the plot to the histogram plots list
+  hist_plots[[col]] <- p
+}
+# Combine the histogram plots using the facet_wrap() function
+combined_plot <- do.call(cowplot::plot_grid, hist_plots)
+
+# Print the combined plot
+print(combined_plot)
+
+#2 distribution of character columns
+ggplot(char_dataset, aes(room_type))+ geom_bar()
+ggplot(char_dataset, aes(neighbourhood_group)) + geom_bar()
+
+
+#2 DATA CLEANING
+#train set cleaning
+#removing Nas
+train <- drop_na(train)
+
+#remove records with price as zero
+train <- train[train$price != 0,]
+#removing outliers - number of reviews
+#zscore method 
+train$zscore <- (abs(train$number_of_reviews-mean(train$number_of_reviews))/sd(train$number_of_reviews))
+summary(train$zscore)
+train <- subset(train, train$zscore < 1)
+hist(train$number_of_reviews)
+
+#removing outliers - price
+train$zscore_price <- (abs(train$price-mean(train$price))/sd(train$price))
+summary(train$zscore_price)
+train <- subset(train, train$zscore_price < 1)
+boxplot(train$price)
+
+#remove zscore columns
+train <- subset.data.frame(train, select = -c(zscore_price,zscore))
+
+#3 GROUPING & AGGREGATION
+#i. room type and price
+group_room_type <- train %>% group_by(room_type) %>% summarise(Mean_price = mean(price)) 
+ggplot(data = group_room_type, aes(x=room_type ,y= Mean_price))+ geom_bar(stat = 'identity')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+#ii. number_of_reviews and price
+group_reviews <- train %>% group_by(number_of_reviews) %>% summarise(Mean_price = mean(price))
+ggplot(data = group_reviews, aes(x= number_of_reviews ,y= Mean_price))+ geom_line()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+#iii. neighbourhood group and price
+neighbourhood <- train %>% group_by(neighbourhood_group) %>% summarise(Mean_price = mean(price))
+ggplot(data = neighbourhood, aes(x=neighbourhood_group ,y= Mean_price))+ geom_bar(stat = 'identity')+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+#4 GEOSPATIAL ANALYSIS
+# Load the USA boundary shapefile
+usa_boundary <- st_read("/home/dennis/Desktop/Data-Science-analytics-R/david/Assignment2/geo/tl_2016_36_cousub.shp")
+
+# Convert the data frame to an sf object
+dataset_sf <- st_as_sf(train, coords = c("longitude", "latitude"), crs = 4326)
+
+# Create the map
+map <- ggplot() +
+  geom_sf(data = usa_boundary, fill = "white") +
+  geom_point(data = train, aes(x = longitude, y = latitude, color = price), size = 3) +
+  scale_color_gradient(low = "green", high = "red", name = "Price") +
+  theme_minimal() +
+  coord_sf(xlim = c(-75, -72), ylim = c(40, 42))
+
+# Display the map
+map
+
+# Create the plot with localized extent
+plot <- plot_ly() %>%
+  add_sf(data = usa_boundary, fill = "white", color = ("black")) %>%
+  add_markers(data = train, x = ~longitude, y = ~latitude, color = ~price,
+              colors = c("green", "red"), marker = list(size = 3)) %>%
+  colorbar(title = "Price") %>%
+  layout(geo = list(scope = "usa"))
+
+# Display the plot
+plot
+
+train2 <- train
+#5 CORRELATION ANALYSIS
+#Perform label encoding - neighbourhood group
+dataset_neighbourhood <- data.frame(unique(train$neighbourhood_group))
+colnames(dataset_neighbourhood) <- "neighbourhood_group"
+dataset_neighbourhood$label <- as.numeric(factor(dataset_neighbourhood$neighbourhood_group))
+for (i in 1:nrow(train))
+{
+  current_neighbourhood <- train$neighbourhood_group[i]
+  
+  # Find the corresponding label encoded figure from the dataset_neighbourhood dataset
+  encoded_figure <- dataset_neighbourhood$label[dataset_neighbourhood$neighbourhood_group == current_neighbourhood]
+  
+  # Replace the neighbourhood value in the 'train' dataset with the encoded figure using gsub
+  train$neighbourhood_group[i] <- gsub(current_neighbourhood, encoded_figure, train$neighbourhood_group[i])
+  train$neighbourhood_group[i] <- as.integer(train$neighbourhood_group[i])
+}
+train$neighbourhood_group <- as.numeric(train$neighbourhood_group)
+
+#Perform label encoding - room_type
+dataset_roomtype <- data.frame(unique(train$room_type))
+colnames(dataset_roomtype) <- "room_type"
+dataset_roomtype$label <- as.numeric(factor(dataset_roomtype$room_type))
+for (i in 1:nrow(train))
+{
+  current_roomtype <- train$room_type[i]
+  
+  # Find the corresponding label encoded figure from the  dataset
+  encoded_figure <- as.numeric( dataset_roomtype$label[dataset_roomtype$room_type == current_roomtype])
+  
+  # Replace the neighbourhood value in the 'train' dataset with the encoded figure using gsub
+  train$room_type[i] <- gsub(current_roomtype, encoded_figure, train$room_type[i])
+
+}
+train$room_type <- as.numeric(train$room_type)
+train$neighbourhood <- as.numeric(as.factor(train$neighbourhood))
+
+#correlation function
+features <- subset.data.frame(train, select = c(latitude,longitude,price,room_type,neighbourhood_group,number_of_reviews))
+corrlation <-round(cor(features, method = "pearson"),2)
+corrlation2 <- melt(corrlation)
+ggplot(data = corrlation2, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") + geom_text(aes(Var2, Var1, label = value), color = "black", size = 4)+
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1))
+
+
+
+#RECIPE
+# Define the recipe
+recipe_model <- recipe(price ~ latitude+longitude+neighbourhood_group+price+room_type+number_of_reviews, data = train )
+
+#STEP 1 centering
+recipe_model <- recipe_model %>%
+  step_center(latitude,longitude)
+
+# STEP 2 scaling
+recipe_model <- recipe_model %>%
+  step_scale(latitude,longitude,number_of_reviews)  
+
+# STEP 3 Range
+recipe_model <- recipe_model %>%
+  step_range(number_of_reviews, min = 0, max = 1) 
+
+# Prepare the data for modeling
+prepped_model <- prep(recipe_model, training = train)
+prepped_data <- bake(prepped_model, new_data = NULL)
+
+# Min-max normalization price
+min_value <- min(prepped_data$price)
+max_value <- max(prepped_data$price)
+range_value <- max_value - min_value
+normalized_prices <- (prepped_data$price - min_value) / range_value
+prepped_data <- subset.data.frame(prepped_data, select = -c(price))
+prepped_data$price <- normalized_prices
+
+#SETTING UP WORKFLOW AND MODEL
+# Create the Linear Regression model
+lm_model <- linear_reg()
+
+# Create the workflow
+workflow_model <- workflow() %>%
+  add_recipe(prepped_model) %>%
+  add_model(lm_model)
+
+
+# Fit the model without cross-validation
+fit <- workflow_model %>% fit(data = prepped_data)
+
+# Save the trained model
+saveRDS(fit$fit, "trained_linear_regression_model.rds")
+
+#CROSS VALIDATION
+# Set up cross-validation using vfold_cv() with stratification
+vfold1 <- vfold_cv(data = prepped_data, strata = price, v = 5)  # Use 5 folds
+vfold2 <- vfold_cv(data = prepped_data, strata = price, v = 10)  # Use 10 folds
+
+
+# Fit the workflow using cross-validation
+fit_cv1 <- fit %>% fit_resamples(resamples = vfold1,control = control_resamples(save_pred = TRUE))
+fit_cv2 <- fit %>% fit_resamples(resamples = vfold2,control = control_resamples(save_pred = TRUE))
+# Get predictions using augment() for fit_cv1
+predictions_cv1 <- augment(fit_cv1)
+predictions_cv2 <- augment(fit_cv1)
+
+# Plot results for fit_cv1
+ggplot(predictions_cv1, aes(exp(price), exp(.pred))) +
+  geom_abline(slope = 1, lty = 2, color = "gray50", alpha = 0.5) +
+  geom_point(alpha = 0.2) +
+  labs(x = "Actual Price", y = "Predicted Price") +
+  ggtitle("Model Results - Cross-validation 1")
+
+# Plot results for fit_cv2
+ggplot(predictions_cv2, aes(exp(price), exp(.pred))) +
+  geom_abline(slope = 1, lty = 2, color = "gray50", alpha = 0.5) +
+  geom_point(alpha = 0.2) +
+  labs(x = "Actual Price", y = "Predicted Price") +
+  ggtitle("Model Results - Cross-validation 2")
+
+# Reverse normalization 
+#model 1
+actual_prices <- (predictions_cv1$price * range_value) + min_value
+predicted_prices <- (predictions_cv1$.pred * range_value) + min_value
+
+#model 2
+actual_prices_2 <- (predictions_cv2$price * range_value) + min_value
+predicted_prices_2 <- (predictions_cv2$.pred * range_value) + min_value
+
+
+#PERFORMANCE METRICS
+#Root Mean Squared error
+#model 1 RMSE
+mse <- mean((actual_prices - predicted_prices)^2)  # Calculate MSE
+rmse_model_1 <- sqrt(mse)  # Calculate RMSE
+
+#model 1 RMSE
+mse2 <- mean((actual_prices_2 - predicted_prices_2)^2)  # Calculate MSE
+rmse_model_2 <- sqrt(mse)  # Calculate RMSE
+
+#test set preprocessing
+test <- read.csv("/home/dennis/Desktop/Data-Science-analytics-R/david/Assignment2/dataset/test.csv", header = TRUE)
+test <- drop_na(test)
+#remove unnecessary data
+test <- subset.data.frame(test, select = -c(id,name,host_id,host_name,neighbourhood,minimum_nights,last_review,
+                                            reviews_per_month,calculated_host_listings_count,availability_365))
+#convert categorical data to numeric
+test$neighbourhood_group<- as.numeric(as.factor(test$neighbourhood_group))
+test$room_type<- as.numeric(as.factor(test$room_type))
+
+#prep test data
+prepped_test_data <- bake(prepped_model, new_data = test)
+# Load the saved model
+loaded_model <- readRDS("trained_linear_regression_model.rds")
+
+# Use the loaded model to make predictions
+new_data <- bake(prepped_model, new_data = test)  
+predictions <- predict(loaded_model, prepped_test_data)
+
+
+
+
+```
+
